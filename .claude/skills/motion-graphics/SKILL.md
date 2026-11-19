@@ -1,83 +1,71 @@
 ---
 name: motion-graphics
-description: Use when making a motion graphics video, animated explainer, title card, data story or short-form clip and a visual style must be chosen or followed. Provides 17 ready-made motion styles written as exact rules (hex colours, easing curves, frame counts, an avoid list) - Swiss International, flat vector explainer, continuous shape morph, single line drawing, editorial data, isometric miniature, dark tech keynote, living screencast, technical HUD, watercolour, risograph, paper cut-out, hand-drawn line boil, 16-bit pixel art, 1980s VHS, toy-like 3D, vertical social captions.
+description: Make motion graphics and short videos as code (Canvas, SVG, Three.js) and render them to MP4 frame by frame. Use when the user asks for a video, animation, motion graphic, logo reveal, launch spot, explainer, lyric video or social clip.
 ---
 
-# Motion Graphics Styles
+# Motion graphics as code
 
-Source: the style list from awesomeclaude.ai/claude-motion-graphics, as supplied by the
-project owner (the site itself is not reachable from this environment).
+You make videos by writing code that draws every frame, then rendering it frame by frame to MP4.
+There is no video model. The quality comes from planning, timing and review.
 
-## How to use
+## 1. Ask once, then work
 
-1. Pick **one** style per video (or per clearly separated section). Never mix two styles in one shot.
-2. Treat every number below as a rule, not a suggestion: palette hex values, easing curves,
-   frame counts, stroke widths and frame rates are exact.
-3. Treat every "no / never" as a hard constraint and check the finished frames against it.
-4. Use only facts and numbers that were provided; styles that show data or products must not
-   invent figures or features.
-5. Verify by rendering sample frames and comparing them against the style's rules before
-   rendering the full video.
+If any of these are missing, ask for all of them in one message, then do not ask again:
+- What should the viewer understand or feel by the end?
+- Duration, aspect ratio (16:9, 9:16, 1:1, 4:5) and where it will play.
+- Real facts, copy, brand colours, logo SVG, product UI or data. Never invent features, numbers or quotes.
+- Audio: none, a track the user supplies (get the BPM), generated music, or voiceover.
+- Style: one named style. If none is given, pick one and say why in one line.
 
-Frame counts assume 30 fps unless the style states its own rate.
+## 2. Storyboard before code
 
-## The 17 styles
+Write a shot list and show it to the user before writing animation code:
+- One row per shot: start time, end time, what is on screen, what the viewer must read, the transition out.
+- List every "read" (a thing the viewer must notice) and give each its own slot. Fast actions, slow meanings.
+- A hook inside the first second. Something happens in every shot. Hold the final frame 0.8 to 1.2 s.
+- If there is music, put cuts and key hits on the beat grid. Not every beat gets a hit.
 
-### 1. Swiss International
-Off-white #f5f2ea, black #111, one signal red #e63323 used on a single element per shot. One grotesk typeface in two weights. A visible 12-column grid with 4% margins; every element snaps to it. Snaps use cubic-bezier(.7,0,.2,1), lines draw at linear speed. Entrances are wipes and clip reveals, never fades; exits are hard cuts on the beat. No overshoot, no shadows, no gradients.
+## 3. Build rules
 
-### 2. Flat vector explainer
-Palette #fdf6ec background, #2b2d42 ink, accents #ff6b35, #4ecdc4, #ffd23f. Geometric shapes and simple characters built from circles and rounded rectangles, no gradients. Entrances overshoot with cubic-bezier(0.34,1.56,0.64,1) and settle within 12 frames, groups stagger by 3 frames. Scene changes are carried by a shape that grows to fill the frame and becomes the next background. No crossfades.
+- One `scene.html` that draws any moment on request. Expose `window.renderAt(t)` and also run a normal
+  requestAnimationFrame preview loop that reads `performance.now()`.
+- Every frame is a pure function of time. No counters that increment per frame, no unseeded `Math.random()`,
+  no physics integrated step by step, no CSS transitions triggered by timers. Seed all randomness.
+- `await document.fonts.ready` before the first frame. Load fonts locally or from a stable CDN.
+- Write the style as numbers: hex colours, cubic-bezier curves, frame counts for staggers, grid margins.
+- Keep text inside a 5% safe margin (middle 80% for vertical social video).
+- Default avoid list unless the style asks for it: particle bursts, lens flares, neon glow, RGB split, glitch,
+  bouncy easing on everything, decorative gradients, text that repeats what the picture shows.
 
-### 3. Continuous shape morph
-Dark #0d1b2a field, shapes in #f72585, #7209b7, #4cc9f0. No cuts: each idea grows out of the previous shape through a readable in-between form over 18 to 30 frames, then holds for at least 1 second. Liquid moments use metaball blending so drops merge smoothly. Camera stays still; the shapes do the moving.
+## 4. Review before the full render
 
-### 4. Single continuous line drawing
-Warm paper #faf7f0, ink #1a1a1a, one accent #c1121f. One line, round caps, constant 4px width, draws itself at a steady linear speed of about 800px/s and never lifts; each picture becomes the next by continuing the line. The camera pans to keep the pen tip in the middle third. One moment where a closed shape floods with the accent colour on a beat.
+- Render a contact sheet: one frame per second (or per beat) tiled into one PNG. Open it and look.
+- Check for: overlapping or clipped text, text on screen too short to read (about 0.3 s per word, minimum 1 s),
+  dead time, fallback fonts, elements too small to see at phone size, black frames.
+- Fix what you find, then render a half-resolution draft, then the final.
 
-### 5. Editorial data storytelling
-Cream #fffdf7, ink #222, one highlight red #d62828 for the series that matters, muted blue #457b9d for the rest. One reading per screen. Bars and lines grow from the baseline over 20 frames with ease-out, counters roll to the exact value and stop dead. One handwritten-style annotation per chart says why the change matters. Labels at least 28px. Use only numbers from the data provided.
+## 5. Render
 
-### 6. Isometric miniature world
-Orthographic camera at true isometric angles; it slides but never rotates into perspective. Background #eef2f3, ink #2d3142, accent #ef8354, shades #4f5d75 and #bfc0c0. Every block has three flat tones: light top, mid left, dark right. Pieces drop in from 40px above with a small bounce, staggered by 3 frames. To explain a step, lift the roof off a building and show the process inside. Labels use thin leader lines.
+Use a virtual clock: replace `performance.now`, `Date.now` and `requestAnimationFrame`, advance time by exactly
+1/fps per frame, screenshot each frame, pipe the PNGs into ffmpeg. Reference script:
+https://awesomeclaude.ai/claude-video-render.mjs
 
-### 7. Dark tech keynote
-Near-black #0a0a0a stage with a faint hairline grid, white #f5f5f5 type, grey #8b8b8b secondary, one accent #ff5a1f on a single element. Slow long-tail easing cubic-bezier(.16,1,.3,1), 30 to 45 frames per move. Objects are revealed by a soft light sweep rather than fades. One giant number at 30% of frame height counts up to its exact value. No lens flares, no glow, no particles.
+```bash
+node claude-video-render.mjs scene.html out.mp4 15 60 1920 1080
+ffmpeg -i out.mp4 -i track.mp3 -c:v copy -c:a aac -b:a 192k -shortest final.mp4
+```
 
-### 8. Living screencast
-Rebuild the interface in HTML and CSS with its real copy, fonts and colours; no screenshots. A cursor moves on eased curves over 20 to 30 frames, pauses 8 frames, clicks with a small ripple. The camera zooms to 1.6x on each detail that matters, then pulls back. One action every 3 to 4 seconds. Do not show any feature that the product does not have.
+Never record audio from the browser. Mux the track with ffmpeg so sync is exact.
 
-### 9. Technical HUD
-Dark #050b0f field, cyan #38e8ff primary, amber #ffb000 for warnings, dim #1d3540 grid. All type monospace on a character grid. Numbers scramble through glyphs for 6 to 10 frames then lock to the true value. Target brackets lock in three steps with a tick. Thin 1.5px lines, no bloom, no glitch tearing, every label readable at 1080p.
+## 6. Report
 
-### 10. Watercolour and ink on paper
-Warm paper #f4efe6 with visible grain, ink #2f3e46, washes in #bc4749, #6a994e, #a7c4d2. Paint every element with brush strokes, never plain shapes. Washes spread over 15 to 25 frames and bleed slightly past the ink. Linework wobbles on twos (re-seeded 12 times per second from a fixed seed). No pure white, no pure black, very little text.
+Deliver the MP4 path, the storyboard as built, the style rules you followed, and the two weakest moments
+with how you would fix them in another round.
 
-### 11. Risograph print
-Warm paper #f3ede2. Two spot inks, fluorescent pink #ff48b0 and blue #0078bf (optional yellow #ffe800), overprinted with multiply blending. Each ink plate is misregistered 2 to 4px and stays offset. All tones are halftone dots, never smooth gradients. Animation steps at 12fps while the camera stays smooth.
+---
+Made by awesomeclaude.ai. Styles with copy-paste rules: https://awesomeclaude.ai/claude-motion-graphics
 
-### 12. Paper cut-out collage
-Card colours #e9e3d5, #e76f51, #2a9d8f, #f4a261 with black #1b1b1b details. Every piece has a slightly rough white cut edge and a small hard shadow on the layer below. Characters move in stop-motion steps at 12fps with split-pin joints; the camera drifts smoothly across 3 to 6 parallax layers.
+## Project additions
 
-### 13. Hand-drawn cartoon with line boil
-Off-white #fffaf0, ink #1c1c1c, flat fills #ff595e, #1982c4, #ffca3a. 24fps animated on twos. Every line has 3 jitter variants cycled so it boils. Fast moves use a smear frame, every big action gets 4 to 6 frames of anticipation, faces act. Variable-width ink lines, no perfect geometric shapes, almost no text.
-
-### 14. 16-bit pixel art
-Render to a 320x180 canvas and scale 6x with imageSmoothingEnabled = false. Use one fixed palette (#1a1c2c, #5d275d, #b13e53, #ef7d57, #ffcd75, #a7f070, #38b764, #41a6f6 plus greys). Shading by dithering only. Sprites animate at 8 to 12fps, camera moves in whole pixels, dialogue in a pixel font that types out in a bordered box.
-
-### 15. 1980s VHS tape
-Scene in deep #120f1d with neon accents #ff3fa4, #00e5ff and warm #ffd166. Post pass: scanlines, 2 to 3px chroma shift, slight tape noise and an occasional tracking line, all seeded by frame index so the render is deterministic. A chrome title moment. Keep the composition clear underneath; the tape texture never covers key text.
-
-### 16. Toy-like 3D
-Three.js, soft studio lighting with one large key and a fill, pastel background #f6e6e4, matte and soft-gloss materials in #ff8fab, #7bdff2, #b2f7ef, #fcbf49. Shallow depth of field on the hero object. Objects land with weight and two small settles, always with a contact shadow. Fixed seeds for any procedural geometry.
-
-### 17. Vertical social captions
-1080x1920, all content inside the middle 80% of the frame. Black #000 and white #fff with yellow #ffe600 for the one highlighted word per caption and pink #ff2e63 for emphasis stamps. Captions are 1 to 4 words, chunky with a thick outline, popping in on each beat with a 6 frame scale overshoot. The first second must work with the sound off.
-
-## Notes for this project (Byte / Tech Shorts Autopilot)
-
-- Byte's own look (warm kawaii flat style) sits closest to **#2 Flat vector explainer**; the
-  in-video captions should follow **#17 Vertical social captions**. Data-heavy topics can use
-  **#5 Editorial data storytelling** for their chart scenes.
-- Styles #8 and #16 assume a browser / Three.js renderer; the project renderer is Python +
-  SVG + FFmpeg, so treat those two as references unless a browser render step is added.
+- `styles.md` in this folder holds the 17 named styles with exact rules (palettes, easing, frame counts).
+- This project renders in Python (SVG -> cairosvg -> FFmpeg) with a virtual clock already; the HTML/Node render path below is a reference, not a requirement.
