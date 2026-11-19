@@ -1,13 +1,13 @@
 """Byte the squirrel: a parametric, code-drawn character rig (v3, kawaii dev squirrel).
 
 Style: chubby fluffy squirrel, big shiny eyes, puffy pointy cheeks, tiny smile,
-rosy blush, paws held together at the chest, a slightly-too-small navy t-shirt
-riding up over a round cream "developer belly", a big fluffy curled tail, and an
-optional coffee mug. Soft dark-brown outlines, warm flat colours.
+rosy blush, paws held together at the chest, a round cream "developer belly"
+poking out under the outfit, and a big fluffy curled tail. Outfits, hats and
+held props come from :mod:`.wardrobe`.
 
 Every frame is described by a :class:`State` and turned into an SVG string by
-:func:`render_svg`, so blinking, lip-sync, tail sway, head tilt and pose changes
-are continuous parameters an animator can interpolate.
+:func:`render_svg`, so blinking, lip-sync, tail sway, head nods, hops and pose
+changes are continuous parameters an animator can interpolate.
 
 Coordinate system: SVG viewBox ``0 0 1000 1100``; y grows downwards.
 """
@@ -17,47 +17,23 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 
-# ---------------------------------------------------------------- palette ---
-PALETTE = {
-    "outline": "#4A2E20",
-    "fur": "#E0884A",
-    "fur_shade": "#C46E34",
-    "stripe": "#B8642E",
-    "cream": "#FFF1DC",
-    "ear_inner": "#F4B79A",
-    "blush": "#F58D8D",
-    "eye": "#2A1A12",
-    "eye_lower": "#6B4430",
-    "eye_shine": "#FFFFFF",
-    "glasses": "#2E3550",
-    "lens": "#D8EEFF",
-    "mouth": "#6A2424",
-    "tongue": "#EE7272",
-    "teeth": "#FFFFFF",
-    "nose": "#3A2218",
-    "shirt": "#26365E",
-    "shirt_shade": "#1C2848",
-    "shirt_print": "#8FE3C8",
-    "mug": "#FFFFFF",
-    "mug_band": "#8FE3C8",
-    "coffee": "#6B3E26",
-    "steam": "#E9DCCB",
-    "acorn_cap": "#7A4A22",
-    "acorn_cap_light": "#9C6534",
-    "acorn": "#C98B4A",
-    "acorn_light": "#E2AC6E",
-    "bg": "#FFF6EA",
-    "bg_circle": "#FFE6C7",
-}
-
-OUTLINE_W = 11
-VIEWBOX = (1000, 1100)
+from . import wardrobe
+from .style import (
+    OUTLINE_W,
+    PALETTE,
+    VIEWBOX,
+    bezier,
+    direction,
+    ellipse,
+    f,
+    outlined,
+    smooth_closed,
+)
 
 # Rhubarb Lip Sync mouth set (Preston Blair): A-H plus X (rest).
 MOUTHS = ("X", "A", "B", "C", "D", "E", "F", "G", "H")
-EYE_STYLES = ("normal", "happy", "wide", "sparkle")
+EYE_STYLES = ("normal", "happy", "wide", "sparkle", "wink")
 BROWS = ("neutral", "raised", "frown", "worried", "skeptical")
-SHIRT_PRINTS = ("</>", "{ }", "Hello World")
 
 
 # -------------------------------------------------------------- arm poses ---
@@ -78,7 +54,7 @@ class Arm:
 POSES: dict[str, tuple[Arm, Arm]] = {
     # (viewer-left arm, viewer-right arm)
     "paws": (Arm(10, -124), Arm(10, -124)),  # paws held together at the chest
-    "hold": (Arm(14, -112), Arm(14, -112)),  # hugging the acorn prop
+    "hold": (Arm(14, -112), Arm(14, -112)),  # paws on a held prop (IK-placed when a prop is set)
     "idle": (Arm(14, -28), Arm(14, -28)),
     "wave": (Arm(10, -124), Arm(150, 25, "open")),
     "point_right": (Arm(10, -124), Arm(98, -4, "point")),
@@ -89,7 +65,6 @@ POSES: dict[str, tuple[Arm, Arm]] = {
     "shrug": (Arm(105, 65, "open"), Arm(105, 65, "open")),
     "explain": (Arm(10, -124), Arm(65, 45, "open")),
 }
-PROP_POSES = {"hold"}  # poses that show the acorn
 
 EXPRESSIONS: dict[str, dict] = {
     "neutral": dict(eye_style="normal", brows="neutral", mouth="X"),
@@ -100,6 +75,8 @@ EXPRESSIONS: dict[str, dict] = {
     "worried": dict(eye_style="normal", brows="worried", mouth="E"),
     "excited": dict(eye_style="sparkle", brows="raised", mouth="D"),
     "annoyed": dict(eye_style="normal", brows="frown", mouth="A", eye_open=0.65),
+    "wink": dict(eye_style="wink", brows="raised", mouth="X"),
+    "cozy": dict(eye_style="happy", brows="neutral", mouth="X"),
 }
 
 
@@ -112,65 +89,26 @@ class State:
     brows: str = "neutral"
     mouth: str = "X"
     head_tilt: float = 0.0  # degrees
-    bob: float = 0.0  # vertical offset of the whole body, px
+    head_dy: float = 0.0  # nods
+    body_tilt: float = 0.0  # degrees, whole character rocks around the feet
+    bob: float = 0.0  # vertical offset of the whole body, px (hops are negative)
     squash: float = 1.0  # vertical scale for emphasis bounces
     tail_sway: float = 0.0  # degrees
     blush: float = 0.7  # opacity
     glasses: bool = False
+    outfit: str = "tshirt"
     shirt_print: str = "</>"
-    mug: bool = False  # coffee mug next to the squirrel
-    show_prop: bool | None = None  # acorn; None = automatic from the pose
+    hat: str | None = None  # beanie | cap | party | headphones
+    prop: str | None = None  # acorn | coffee | cookie | laptop | sketchbook (held)
+    prop_offset: tuple[float, float] = (0.0, 0.0)  # move the held prop (sip, munch)
+    paw_jitter: tuple[float, float] = (0.0, 0.0)  # extra paw y offsets (typing)
+    mug: bool = False  # coffee mug on the floor next to the squirrel
+    t: float = 0.0  # time, for small looping details such as steam
     arms: tuple[Arm, Arm] | None = None  # overrides pose when set
     background: str | None = None  # colour, "scene" (light bg + soft circle) or None = transparent
 
     def with_expression(self, name: str) -> "State":
         return replace(self, **EXPRESSIONS[name])
-
-
-# ---------------------------------------------------------------- helpers ---
-def _f(x: float) -> str:
-    return f"{x:.1f}"
-
-
-def _outlined(path_d: str, fill: str, width: float = OUTLINE_W) -> str:
-    return (
-        f'<path d="{path_d}" fill="{fill}" stroke="{PALETTE["outline"]}" '
-        f'stroke-width="{width}" stroke-linejoin="round" stroke-linecap="round"/>'
-    )
-
-
-def _ellipse(cx, cy, rx, ry, fill, outline=True) -> str:
-    stroke = f' stroke="{PALETTE["outline"]}" stroke-width="{OUTLINE_W}"' if outline else ""
-    return f'<ellipse cx="{_f(cx)}" cy="{_f(cy)}" rx="{_f(rx)}" ry="{_f(ry)}" fill="{fill}"{stroke}/>'
-
-
-def _dir(side: int, angle: float) -> tuple[float, float]:
-    a = math.radians(angle)
-    return side * math.sin(a), math.cos(a)
-
-
-def _bezier(p, t):
-    """Point and unit tangent on a cubic Bezier given 4 control points."""
-    (x0, y0), (x1, y1), (x2, y2), (x3, y3) = p
-    u = 1 - t
-    x = u**3 * x0 + 3 * u * u * t * x1 + 3 * u * t * t * x2 + t**3 * x3
-    y = u**3 * y0 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t**3 * y3
-    dx = 3 * u * u * (x1 - x0) + 6 * u * t * (x2 - x1) + 3 * t * t * (x3 - x2)
-    dy = 3 * u * u * (y1 - y0) + 6 * u * t * (y2 - y1) + 3 * t * t * (y3 - y2)
-    n = math.hypot(dx, dy) or 1.0
-    return x, y, dx / n, dy / n
-
-
-def _smooth_closed(points) -> str:
-    """Closed Catmull-Rom spline through points, as an SVG path."""
-    n = len(points)
-    d = [f"M {_f(points[0][0])} {_f(points[0][1])}"]
-    for i in range(n):
-        p0, p1, p2, p3 = points[i - 1], points[i], points[(i + 1) % n], points[(i + 2) % n]
-        c1 = (p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6)
-        c2 = (p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6)
-        d.append(f"C {_f(c1[0])} {_f(c1[1])}, {_f(c2[0])} {_f(c2[1])}, {_f(p2[0])} {_f(p2[1])}")
-    return " ".join(d) + " Z"
 
 
 # ------------------------------------------------------------------- tail ---
@@ -183,9 +121,9 @@ def _tail_shape(scale: float, fluff: float, samples: int = 90) -> str:
     for i in range(samples + 1):
         g = i / samples
         if g < 0.72:
-            x, y, tx, ty = _bezier(_TAIL_CURVE, g / 0.72)
+            x, y, tx, ty = bezier(_TAIL_CURVE, g / 0.72)
         else:
-            x, y, tx, ty = _bezier(_TAIL_TIP_CURL, (g - 0.72) / 0.28)
+            x, y, tx, ty = bezier(_TAIL_TIP_CURL, (g - 0.72) / 0.28)
         nx, ny = -ty, tx
         width = (42 + 82 * math.sin(math.pi * min(1.0, g * 1.15)) ** 0.7) * scale
         width = max(width * (1 - 0.25 * max(0.0, g - 0.8) / 0.2), 58 * scale)
@@ -193,17 +131,16 @@ def _tail_shape(scale: float, fluff: float, samples: int = 90) -> str:
         left.append((x + nx * (width + bump), y + ny * (width + bump)))
         right.append((x - nx * (width + bump), y - ny * (width + bump)))
     cap = []  # rounded tip
-    w = width
     for k in range(1, 8):
         th = math.pi * k / 8
-        cap.append((x + w * (nx * math.cos(th) + tx * math.sin(th)), y + w * (ny * math.cos(th) + ty * math.sin(th))))
-    return _smooth_closed(left + cap + right[::-1])
+        cap.append((x + width * (nx * math.cos(th) + tx * math.sin(th)), y + width * (ny * math.cos(th) + ty * math.sin(th))))
+    return smooth_closed(left + cap + right[::-1])
 
 
 def _tail(sway: float) -> str:
     return (
-        f'<g transform="rotate({_f(sway)} 610 950)">'
-        f"{_outlined(_tail_shape(1.0, 14), PALETTE['fur'])}"
+        f'<g transform="rotate({f(sway)} 610 950)">'
+        f"{outlined(_tail_shape(1.0, 14), PALETTE['fur'])}"
         f'<path d="{_tail_shape(0.42, 5)}" fill="{PALETTE["stripe"]}" opacity="0.55"/>'
         "</g>"
     )
@@ -217,152 +154,126 @@ _BODY = (
 _HEM_Y_SIDE, _HEM_Y_MID = 868.0, 800.0  # the shirt rides up in the middle
 
 
-def _shirt_print(text: str) -> str:
-    if text == "Hello World":
-        return (
-            f'<text x="500" y="760" font-family="DejaVu Sans Mono, monospace" font-size="38" font-weight="bold" '
-            f'fill="{PALETTE["shirt_print"]}" text-anchor="middle">Hello</text>'
-            f'<text x="500" y="800" font-family="DejaVu Sans Mono, monospace" font-size="38" font-weight="bold" '
-            f'fill="{PALETTE["shirt_print"]}" text-anchor="middle">World</text>'
-        )
-    safe = text.replace("<", "&lt;").replace(">", "&gt;")
-    return (
-        f'<text x="500" y="795" font-family="DejaVu Sans Mono, monospace" font-size="66" font-weight="bold" '
-        f'fill="{PALETTE["shirt_print"]}" text-anchor="middle">{safe}</text>'
-    )
-
-
 def _body(s: State) -> str:
     o = PALETTE["outline"]
-    feet = _ellipse(408, 1018, 84, 40, PALETTE["fur"]) + _ellipse(592, 1018, 84, 40, PALETTE["fur"])
+    feet = ellipse(408, 1018, 84, 40, PALETTE["fur"]) + ellipse(592, 1018, 84, 40, PALETTE["fur"])
     toes = "".join(
         f'<path d="M {x} 1006 L {x} 1032" stroke="{o}" stroke-width="6" stroke-linecap="round"/>' for x in (388, 424, 576, 612)
     )
-    hem = f"M 240 {_HEM_Y_SIDE} Q 500 {2 * _HEM_Y_MID - _HEM_Y_SIDE} 760 {_HEM_Y_SIDE}"
-    shirt_area = f"M 220 560 L 780 560 L 780 {_HEM_Y_SIDE} Q 500 {2 * _HEM_Y_MID - _HEM_Y_SIDE} 220 {_HEM_Y_SIDE} Z"
+    if s.outfit == "none":  # no clothes: full cream tummy
+        belly = "M 500 690 C 600 690, 650 790, 640 880 C 632 950, 580 990, 500 990 C 420 990, 368 950, 360 880 C 350 790, 400 690, 500 690 Z"
+        return feet + toes + outlined(_BODY, PALETTE["fur"]) + f'<path d="{belly}" fill="{PALETTE["cream"]}"/>' + (
+            f'<path d="M 488 925 Q 500 940 512 925" fill="none" stroke="{o}" stroke-width="6" stroke-linecap="round"/>'
+        )
     # the belly pokes out below the hem, a little wider than the body line
     belly = "M 345 840 C 330 900, 360 975, 500 985 C 640 975, 670 900, 655 840 C 600 800, 400 800, 345 840 Z"
     return (
         feet
         + toes
-        + _outlined(_BODY, PALETTE["fur"])
-        + f'<clipPath id="bodyclip"><path d="{_BODY}"/></clipPath>'
-        + _outlined(belly, PALETTE["cream"])
+        + outlined(_BODY, PALETTE["fur"])
+        + outlined(belly, PALETTE["cream"])
         + f'<path d="M 488 925 Q 500 940 512 925" fill="none" stroke="{o}" stroke-width="6" stroke-linecap="round"/>'
-        + f'<g clip-path="url(#bodyclip)"><path d="{shirt_area}" fill="{PALETTE["shirt"]}"/>'
-        + f'<path d="{hem}" fill="none" stroke="{PALETTE["shirt_shade"]}" stroke-width="26"/>'
-        + f'<path d="{hem}" fill="none" stroke="{o}" stroke-width="{OUTLINE_W}"/></g>'
-        + _outlined(_BODY, "none")
-        + _shirt_print(s.shirt_print)
+        + wardrobe.outfit_torso(s.outfit, s.shirt_print, _BODY, _HEM_Y_SIDE, _HEM_Y_MID)
+        + outlined(_BODY, "none")
     )
 
 
 # ------------------------------------------------------------------- arms ---
 SHOULDERS = {-1: (380.0, 675.0), 1: (620.0, 675.0)}
 UPPER_LEN, FORE_LEN, ARM_W = 72.0, 88.0, 62.0
+PAW_OFFSET = 8.0
 
 
-def _arm(side: int, arm: Arm) -> tuple[str, str]:
+def reach(side: int, target: tuple[float, float], hand: str = "paw") -> Arm:
+    """Two-bone inverse kinematics: an Arm whose paw centre lands on ``target``.
+
+    The elbow always bends outward, away from the body.
+    """
+    sx, sy = SHOULDERS[side]
+    tx, ty = target
+    l1, l2 = UPPER_LEN, FORE_LEN + PAW_OFFSET
+    dx, dy = tx - sx, ty - sy
+    d = math.hypot(dx, dy) or 1e-6
+    d_c = min(max(d, abs(l1 - l2) + 1e-3), l1 + l2 - 1e-3)
+    base = math.atan2(dy, dx)
+    alpha = math.acos(max(-1.0, min(1.0, (l1 * l1 + d_c * d_c - l2 * l2) / (2 * l1 * d_c))))
+    best = None
+    for sgn in (1, -1):
+        a = base + sgn * alpha
+        ex, ey = sx + l1 * math.cos(a), sy + l1 * math.sin(a)
+        if best is None or side * (ex - sx) > side * (best[0] - sx):
+            best = (ex, ey)
+    ex, ey = best
+    px, py = sx + dx / d * d_c, sy + dy / d * d_c
+    ux, uy = (ex - sx) / l1, (ey - sy) / l1
+    fx, fy = px - ex, py - ey
+    fn = math.hypot(fx, fy) or 1e-6
+    fx, fy = fx / fn, fy / fn
+    upper = math.degrees(math.atan2(side * ux, uy))
+    fore = math.degrees(math.atan2(side * fx, fy))
+    elbow = (fore - upper + 180) % 360 - 180
+    return Arm(upper, elbow, hand)
+
+
+def prop_centre(s: State) -> tuple[float, float]:
+    return 500.0 + s.prop_offset[0], 720.0 + s.prop_offset[1]
+
+
+def arms_for(s: State) -> tuple[Arm, Arm]:
+    if s.arms is not None:
+        return s.arms
+    if s.prop and s.pose in ("hold", "paws"):
+        cx, cy = prop_centre(s)
+        (lx, ly), (rx, ry) = wardrobe.PAW_TARGETS[s.prop]
+        jl, jr = s.paw_jitter
+        return reach(-1, (cx + lx, cy + ly + jl)), reach(1, (cx + rx, cy + ry + jr))
+    return POSES[s.pose]
+
+
+def _arm(side: int, arm: Arm, outfit: str) -> tuple[str, str]:
     """Return (arm svg, paw svg) so a prop can sit between them."""
     sx, sy = SHOULDERS[side]
-    ux, uy = _dir(side, arm.upper)
+    ux, uy = direction(side, arm.upper)
     ex, ey = sx + ux * UPPER_LEN, sy + uy * UPPER_LEN
-    fx, fy = _dir(side, arm.upper + arm.elbow)
+    fx, fy = direction(side, arm.upper + arm.elbow)
     hx, hy = ex + fx * FORE_LEN, ey + fy * FORE_LEN
     o = PALETTE["outline"]
-    limb = f"M {_f(sx)} {_f(sy)} L {_f(ex)} {_f(ey)} L {_f(hx)} {_f(hy)}"
-    sleeve_end = (sx + ux * UPPER_LEN * 0.45, sy + uy * UPPER_LEN * 0.45)
-    sleeve = f"M {_f(sx)} {_f(sy)} L {_f(sleeve_end[0])} {_f(sleeve_end[1])}"
+    limb = f"M {f(sx)} {f(sy)} L {f(ex)} {f(ey)} L {f(hx)} {f(hy)}"
     arm_svg = (
         f'<path d="{limb}" fill="none" stroke="{o}" stroke-width="{ARM_W + 2 * OUTLINE_W}" '
         'stroke-linecap="round" stroke-linejoin="round"/>'
         f'<path d="{limb}" fill="none" stroke="{PALETTE["fur"]}" stroke-width="{ARM_W}" '
         'stroke-linecap="round" stroke-linejoin="round"/>'
-        # short t-shirt sleeve
-        f'<path d="{sleeve}" fill="none" stroke="{o}" stroke-width="{ARM_W + 6 + 2 * OUTLINE_W}" stroke-linecap="butt"/>'
-        f'<path d="{sleeve}" fill="none" stroke="{PALETTE["shirt"]}" stroke-width="{ARM_W + 6}" stroke-linecap="butt"/>'
+        + wardrobe.sleeve(outfit, sx, sy, ex, ey, hx, hy, ARM_W)
     )
-    px, py = hx + fx * 8, hy + fy * 8
+    px, py = hx + fx * PAW_OFFSET, hy + fy * PAW_OFFSET
     paw = []
     if arm.hand == "point":
         tip_x, tip_y = px + fx * 56, py + fy * 56
         paw.append(
-            f'<path d="M {_f(px)} {_f(py)} L {_f(tip_x)} {_f(tip_y)}" stroke="{o}" '
+            f'<path d="M {f(px)} {f(py)} L {f(tip_x)} {f(tip_y)}" stroke="{o}" '
             f'stroke-width="{22 + 2 * OUTLINE_W}" stroke-linecap="round"/>'
-            f'<path d="M {_f(px)} {_f(py)} L {_f(tip_x)} {_f(tip_y)}" stroke="{PALETTE["fur"]}" '
+            f'<path d="M {f(px)} {f(py)} L {f(tip_x)} {f(tip_y)}" stroke="{PALETTE["fur"]}" '
             'stroke-width="22" stroke-linecap="round"/>'
         )
     if arm.hand == "open":
         nx, ny = -fy, fx
         for k in (-1, 0, 1):
             cx, cy = px + fx * 28 + nx * k * 18, py + fy * 28 + ny * k * 18
-            paw.append(f'<circle cx="{_f(cx)}" cy="{_f(cy)}" r="12" fill="{PALETTE["fur"]}" stroke="{o}" stroke-width="8"/>')
-    paw.append(f'<circle cx="{_f(px)}" cy="{_f(py)}" r="33" fill="{PALETTE["fur"]}" stroke="{o}" stroke-width="{OUTLINE_W}"/>')
+            paw.append(f'<circle cx="{f(cx)}" cy="{f(cy)}" r="12" fill="{PALETTE["fur"]}" stroke="{o}" stroke-width="8"/>')
+    paw.append(f'<circle cx="{f(px)}" cy="{f(py)}" r="33" fill="{PALETTE["fur"]}" stroke="{o}" stroke-width="{OUTLINE_W}"/>')
     if arm.hand == "paw":  # tiny finger creases
         nx, ny = -fy, fx
         for k in (-1, 1):
             ax, ay = px + fx * 12 + nx * k * 9, py + fy * 12 + ny * k * 9
             bx, by = px + fx * 30 + nx * k * 9, py + fy * 30 + ny * k * 9
-            paw.append(f'<path d="M {_f(ax)} {_f(ay)} L {_f(bx)} {_f(by)}" stroke="{o}" stroke-width="5" stroke-linecap="round"/>')
+            paw.append(f'<path d="M {f(ax)} {f(ay)} L {f(bx)} {f(by)}" stroke="{o}" stroke-width="5" stroke-linecap="round"/>')
     return arm_svg, "".join(paw)
 
 
-# ------------------------------------------------------------------ props ---
-def _acorn(cx: float = 500.0, cy: float = 720.0) -> str:
-    o = PALETTE["outline"]
-    nut = (
-        f"M {cx - 58} {cy - 10} C {cx - 62} {cy + 55}, {cx - 24} {cy + 98}, {cx} {cy + 104} "
-        f"C {cx + 24} {cy + 98}, {cx + 62} {cy + 55}, {cx + 58} {cy - 10} Z"
-    )
-    cap = (
-        f"M {cx - 75} {cy - 6} C {cx - 80} {cy - 66}, {cx - 38} {cy - 86}, {cx} {cy - 86} "
-        f"C {cx + 38} {cy - 86}, {cx + 80} {cy - 66}, {cx + 75} {cy - 6} "
-        f"C {cx + 38} {cy + 8}, {cx - 38} {cy + 8}, {cx - 75} {cy - 6} Z"
-    )
-    hatch = "".join(
-        f'<path d="M {cx + k} {cy - 104} L {cx + k + 56} {cy + 18}" stroke="{PALETTE["acorn_cap_light"]}" stroke-width="6"/>'
-        f'<path d="M {cx + k} {cy - 104} L {cx + k - 56} {cy + 18}" stroke="{PALETTE["acorn_cap_light"]}" stroke-width="6"/>'
-        for k in range(-150, 190, 32)
-    )
-    stem = f"M {cx - 6} {cy - 82} Q {cx - 4} {cy - 116} {cx + 20} {cy - 124}"
-    return (
-        f'<path d="{stem}" fill="none" stroke="{o}" stroke-width="{11 + OUTLINE_W}" stroke-linecap="round"/>'
-        f'<path d="{stem}" fill="none" stroke="{PALETTE["acorn_cap"]}" stroke-width="11" stroke-linecap="round"/>'
-        + _outlined(nut, PALETTE["acorn"])
-        + f'<path d="M {cx + 28} {cy + 14} Q {cx + 38} {cy + 46} {cx + 20} {cy + 76}" fill="none" '
-        f'stroke="{PALETTE["acorn_light"]}" stroke-width="11" stroke-linecap="round"/>'
-        + f'<clipPath id="acorncap"><path d="{cap}"/></clipPath>'
-        + f'<path d="{cap}" fill="{PALETTE["acorn_cap"]}"/>'
-        + f'<g clip-path="url(#acorncap)">{hatch}</g>'
-        + f'<path d="{cap}" fill="none" stroke="{o}" stroke-width="{OUTLINE_W}" stroke-linejoin="round"/>'
-    )
-
-
-def _mug(cx: float = 150.0, base_y: float = 1030.0) -> str:
-    o = PALETTE["outline"]
-    w, h = 130, 140
-    x0, y0 = cx - w / 2, base_y - h
-    body = (
-        f"M {x0} {y0} L {x0 + w} {y0} L {x0 + w - 6} {base_y - 14} "
-        f"Q {x0 + w - 8} {base_y} {cx} {base_y} Q {x0 + 8} {base_y} {x0 + 6} {base_y - 14} Z"
-    )
-    handle = f"M {x0 + w - 4} {y0 + 30} C {x0 + w + 50} {y0 + 25}, {x0 + w + 50} {y0 + 100}, {x0 + w - 8} {y0 + 95}"
-    steam = "".join(
-        f'<path d="M {cx + dx} {y0 - 20} C {cx + dx - 18} {y0 - 50}, {cx + dx + 18} {y0 - 70}, {cx + dx} {y0 - 100}" '
-        f'fill="none" stroke="{PALETTE["steam"]}" stroke-width="10" stroke-linecap="round"/>'
-        for dx in (-28, 0, 28)
-    )
-    return (
-        steam
-        + f'<path d="{handle}" fill="none" stroke="{o}" stroke-width="{22 + OUTLINE_W}" stroke-linecap="round"/>'
-        + f'<path d="{handle}" fill="none" stroke="{PALETTE["mug"]}" stroke-width="22" stroke-linecap="round"/>'
-        + _outlined(body, PALETTE["mug"])
-        + f'<ellipse cx="{cx}" cy="{y0 + 4}" rx="{w / 2 - 10}" ry="12" fill="{PALETTE["coffee"]}"/>'
-        + f'<rect x="{x0 + 3}" y="{y0 + 58}" width="{w - 7}" height="34" fill="{PALETTE["mug_band"]}"/>'
-        + f'<text x="{cx}" y="{y0 + 86}" font-family="DejaVu Sans Mono, monospace" font-size="30" font-weight="bold" '
-        f'fill="{PALETTE["shirt"]}" text-anchor="middle">{{ }}</text>'
-        + _outlined(body, "none")
-    )
+def _floor_mug(cx: float = 150.0, base_y: float = 1030.0, t: float = 0.0) -> str:
+    under, _ = wardrobe.prop("coffee", cx, base_y - 62, t)
+    return under
 
 
 # ------------------------------------------------------------------- head ---
@@ -396,36 +307,38 @@ def _eye(side: int, s: State) -> str:
     o = PALETTE["eye"]
     lx, ly = s.look
     openness = max(0.0, min(1.0, s.eye_open))
-    if s.eye_style == "happy" or openness < 0.12:
-        bend = -26 if s.eye_style == "happy" else 10
+    style = s.eye_style
+    if style == "wink":
+        style = "happy" if side == 1 else "normal"
+    if style == "happy" or openness < 0.12:
+        bend = -26 if style == "happy" else 10
         return (
-            f'<path d="M {_f(cx - 32)} {_f(cy + 8)} Q {_f(cx)} {_f(cy + 8 + bend)} {_f(cx + 32)} {_f(cy + 8)}" '
+            f'<path d="M {f(cx - 32)} {f(cy + 8)} Q {f(cx)} {f(cy + 8 + bend)} {f(cx + 32)} {f(cy + 8)}" '
             f'fill="none" stroke="{o}" stroke-width="12" stroke-linecap="round"/>'
         )
-    rx, ry = (46, 56) if s.eye_style == "wide" else (40, 50)
+    rx, ry = (46, 56) if style == "wide" else (40, 50)
     ry *= openness
     ex, ey = cx + lx * 8, cy + ly * 8
     cid = f"eyeclip{side}"
     out = [
-        f'<clipPath id="{cid}"><ellipse cx="{_f(ex)}" cy="{_f(ey)}" rx="{rx}" ry="{_f(ry)}"/></clipPath>',
-        f'<ellipse cx="{_f(ex)}" cy="{_f(ey)}" rx="{rx}" ry="{_f(ry)}" fill="{o}"/>',
-        # warm lower crescent for a glossy look
-        f'<g clip-path="url(#{cid})"><ellipse cx="{_f(ex)}" cy="{_f(ey + ry * 0.75)}" rx="{rx}" ry="{_f(ry * 0.55)}" '
+        f'<clipPath id="{cid}"><ellipse cx="{f(ex)}" cy="{f(ey)}" rx="{rx}" ry="{f(ry)}"/></clipPath>',
+        f'<ellipse cx="{f(ex)}" cy="{f(ey)}" rx="{rx}" ry="{f(ry)}" fill="{o}"/>',
+        f'<g clip-path="url(#{cid})"><ellipse cx="{f(ex)}" cy="{f(ey + ry * 0.75)}" rx="{rx}" ry="{f(ry * 0.55)}" '
         f'fill="{PALETTE["eye_lower"]}"/></g>',
     ]
     if openness > 0.35:
-        hs = 1.2 if s.eye_style == "sparkle" else 1.0
+        hs = 1.2 if style == "sparkle" else 1.0
         out.append(
-            f'<circle cx="{_f(ex + 13)}" cy="{_f(ey - ry * 0.38)}" r="{_f(16 * hs)}" fill="{PALETTE["eye_shine"]}"/>'
-            f'<circle cx="{_f(ex - 14)}" cy="{_f(ey + ry * 0.36)}" r="{_f(7.5 * hs)}" fill="{PALETTE["eye_shine"]}"/>'
-            f'<circle cx="{_f(ex + 18)}" cy="{_f(ey + ry * 0.2)}" r="{_f(3.5 * hs)}" fill="{PALETTE["eye_shine"]}"/>'
+            f'<circle cx="{f(ex + 13)}" cy="{f(ey - ry * 0.38)}" r="{f(16 * hs)}" fill="{PALETTE["eye_shine"]}"/>'
+            f'<circle cx="{f(ex - 14)}" cy="{f(ey + ry * 0.36)}" r="{f(7.5 * hs)}" fill="{PALETTE["eye_shine"]}"/>'
+            f'<circle cx="{f(ex + 18)}" cy="{f(ey + ry * 0.2)}" r="{f(3.5 * hs)}" fill="{PALETTE["eye_shine"]}"/>'
         )
-        if s.eye_style == "sparkle":
+        if style == "sparkle":
             sx, sy = ex - 12, ey - ry * 0.1
             out.append(
-                f'<path d="M {_f(sx)} {_f(sy - 12)} L {_f(sx + 3)} {_f(sy - 3)} L {_f(sx + 12)} {_f(sy)} '
-                f'L {_f(sx + 3)} {_f(sy + 3)} L {_f(sx)} {_f(sy + 12)} L {_f(sx - 3)} {_f(sy + 3)} '
-                f'L {_f(sx - 12)} {_f(sy)} L {_f(sx - 3)} {_f(sy - 3)} Z" fill="{PALETTE["eye_shine"]}"/>'
+                f'<path d="M {f(sx)} {f(sy - 12)} L {f(sx + 3)} {f(sy - 3)} L {f(sx + 12)} {f(sy)} '
+                f'L {f(sx + 3)} {f(sy + 3)} L {f(sx)} {f(sy + 12)} L {f(sx - 3)} {f(sy + 3)} '
+                f'L {f(sx - 12)} {f(sy)} L {f(sx - 3)} {f(sy - 3)} Z" fill="{PALETTE["eye_shine"]}"/>'
             )
     return "".join(out)
 
@@ -436,7 +349,7 @@ def _glasses() -> str:
     for side in (-1, 1):
         cx, cy = EYES[side]
         out.append(
-            f'<circle cx="{_f(cx)}" cy="{_f(cy)}" r="72" fill="{PALETTE["lens"]}" fill-opacity="0.15" '
+            f'<circle cx="{f(cx)}" cy="{f(cy)}" r="72" fill="{PALETTE["lens"]}" fill-opacity="0.15" '
             f'stroke="{g}" stroke-width="10"/>'
         )
     out.append(f'<path d="M 474 405 Q 500 388 526 405" fill="none" stroke="{g}" stroke-width="10" stroke-linecap="round"/>')
@@ -460,8 +373,8 @@ def _brows(kind: str) -> str:
             outer, inner = _BROW_SHAPES[kind]
         x_outer, x_inner = cx + side * 26, cx - side * 22
         out.append(
-            f'<path d="M {_f(x_outer)} {_f(base_y + outer)} Q {_f(cx)} {_f(base_y - 8 + (outer + inner) / 2)} '
-            f'{_f(x_inner)} {_f(base_y + inner)}" fill="none" stroke="{o}" stroke-width="10" stroke-linecap="round"/>'
+            f'<path d="M {f(x_outer)} {f(base_y + outer)} Q {f(cx)} {f(base_y - 8 + (outer + inner) / 2)} '
+            f'{f(x_inner)} {f(base_y + inner)}" fill="none" stroke="{o}" stroke-width="10" stroke-linecap="round"/>'
         )
     return "".join(out)
 
@@ -544,8 +457,9 @@ def _head(s: State) -> str:
         '<ellipse cx="493" cy="467" rx="5" ry="3" fill="#FFFFFF" opacity="0.6"/>'
     )
     parts.append(_mouth(s.mouth))
+    parts.append(wardrobe.hat(s.hat))
     px, py = HEAD_PIVOT
-    return f'<g transform="rotate({_f(s.head_tilt)} {_f(px)} {_f(py)})">{"".join(parts)}</g>'
+    return f'<g transform="translate(0 {f(s.head_dy)}) rotate({f(s.head_tilt)} {f(px)} {f(py)})">{"".join(parts)}</g>'
 
 
 # ----------------------------------------------------------------- render ---
@@ -562,35 +476,56 @@ def _background(kind: str | None) -> str:
     return f'<rect width="{vw}" height="{vh}" fill="{kind}"/>'
 
 
-def render_svg(s: State, size: tuple[int, int] | None = None) -> str:
-    """Return a complete SVG document for one frame of the character."""
+def validate(s: State) -> None:
     if s.pose not in POSES and s.arms is None:
         raise ValueError(f"unknown pose {s.pose!r}")
     if s.eye_style not in EYE_STYLES:
         raise ValueError(f"unknown eye style {s.eye_style!r}")
     if s.brows not in BROWS:
         raise ValueError(f"unknown brows {s.brows!r}")
-    left, right = s.arms or POSES[s.pose]
-    vw, vh = VIEWBOX
-    w, h = size or VIEWBOX
-    show_prop = s.show_prop if s.show_prop is not None else s.pose in PROP_POSES
+    if s.outfit not in wardrobe.OUTFITS:
+        raise ValueError(f"unknown outfit {s.outfit!r}")
+    if s.hat is not None and s.hat not in wardrobe.HATS:
+        raise ValueError(f"unknown hat {s.hat!r}")
+    if s.prop is not None and s.prop not in wardrobe.PROPS:
+        raise ValueError(f"unknown prop {s.prop!r}")
 
-    arms = [(_arm(side, a), a.front) for side, a in ((-1, left), (1, right))]
+
+def character_group(s: State) -> str:
+    """The character (and floor mug) as an SVG group, without the <svg> wrapper."""
+    validate(s)
+    left, right = arms_for(s)
+    arms = [(_arm(side, a, s.outfit), a.front) for side, a in ((-1, left), (1, right))]
     back = "".join(a + p for (a, p), front in arms if not front)
     front_arms = "".join(a for (a, _), front in arms if front)
     front_paws = "".join(p for (_, p), front in arms if front)
-    prop = _acorn() if show_prop else ""
+    prop_under, prop_over = ("", "")
+    if s.prop and s.pose in ("hold", "paws"):
+        cx, cy = prop_centre(s)
+        prop_under, prop_over = wardrobe.prop(s.prop, cx, cy, s.t)
 
     sq = s.squash
     stretch_x = 1 / math.sqrt(sq) if sq > 0 else 1
-    body_tf = f"translate(0 {_f(s.bob)}) translate(500 1050) scale({stretch_x:.4f} {sq:.4f}) translate(-500 -1050)"
+    body_tf = (
+        f"translate(-35 {f(s.bob)}) rotate({f(s.body_tilt)} 500 1030) "
+        f"translate(500 1050) scale({stretch_x:.4f} {sq:.4f}) translate(-500 -1050)"
+    )
+    return (
+        f"{_floor_mug(t=s.t) if s.mug else ''}"
+        f'<g transform="{body_tf}">'
+        f"{_tail(s.tail_sway)}{back}{_body(s)}{wardrobe.hood(s.outfit)}{_head(s)}"
+        f"{front_arms}{prop_under}{front_paws}{prop_over}"
+        "</g>"
+    )
+
+
+def render_svg(s: State, size: tuple[int, int] | None = None) -> str:
+    """Return a complete SVG document for one frame of the character."""
+    vw, vh = VIEWBOX
+    w, h = size or VIEWBOX
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {vw} {vh}" width="{w}" height="{h}">'
-        f"{_background(s.background)}"
-        f"{_mug() if s.mug else ''}"
-        f'<g transform="translate(-35 0) {body_tf}">'
-        f"{_tail(s.tail_sway)}{back}{_body(s)}{_head(s)}{front_arms}{prop}{front_paws}"
-        "</g></svg>"
+        f"{_background(s.background)}{character_group(s)}</svg>"
     )
 
 

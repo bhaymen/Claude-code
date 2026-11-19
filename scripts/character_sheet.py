@@ -59,7 +59,7 @@ def main(out_dir: str) -> None:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    hero = _png(state_for("happy", "wave"), 900)
+    hero = _png(state_for("happy", "wave", mug=True), 900)
     canvas = Image.new("RGB", (900, 990), BG)
     canvas.paste(hero, (0, 0), hero)
     canvas.save(out / "byte_hero.png")
