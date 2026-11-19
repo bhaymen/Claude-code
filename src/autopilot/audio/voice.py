@@ -29,10 +29,18 @@ class VoiceStyle:
     formant: str = "preserved"  # "shifted" = small creature timbre, "preserved" = keeps a human timbre
     lang: str = "en-us"
     warmth: bool = True  # gentle low-shelf boost + soft compression for a cosy, close-mic feel
+    body_db: float = 3.0  # low-shelf boost at 180 Hz (chest / "radio voice" body)
+    air_db: float = -2.0  # high-shelf at 7 kHz (negative = softer, less sibilant)
+    room: float = 0.0  # 0..1 tiny-room ambience (0 = dry)
 
 
-# Natural, deep and warm (no pitch-up). Pick from the candidates video.
+# Natural, deep and warm (no pitch-up): Michael (US), slowed and softened for a cosy feel.
 BYTE_VOICE = VoiceStyle(voice="am_michael", speed=0.95)
+COMFY_VARIANTS = {
+    "1 comfy": VoiceStyle(voice="am_michael", speed=0.90, body_db=4.5, air_db=-3.5, room=0.15),
+    "2 comfier": VoiceStyle(voice="am_michael", speed=0.88, semitones=-0.8, body_db=5.0, air_db=-4.0, room=0.2),
+    "3 fireside": VoiceStyle(voice="am_michael", speed=0.86, semitones=-1.3, body_db=5.5, air_db=-5.0, room=0.3),
+}
 
 
 def ensure_models(model_dir: Path = MODEL_DIR) -> tuple[Path, Path]:
@@ -72,10 +80,14 @@ def speak(text: str, out_wav: str | Path, style: VoiceStyle = BYTE_VOICE) -> Pat
         filters.append(f"rubberband=pitch={ratio:.4f}:formant={style.formant}:transients=smooth")
     if style.warmth:
         filters += [
-            "lowshelf=f=180:g=3",  # body
-            "highshelf=f=7000:g=-2",  # soften sibilance
+            f"lowshelf=f=180:g={style.body_db}",  # body
+            f"highshelf=f=7000:g={style.air_db}",  # soften sibilance
+            "deesser=i=0.4",
             "acompressor=threshold=-20dB:ratio=2.5:attack=15:release=200",
         ]
+    if style.room:
+        d = style.room
+        filters.append(f"aecho=0.9:0.9:23|41:{0.25 * d:.3f}|{0.15 * d:.3f}")
     filters.append("loudnorm=I=-16:TP=-1.5:LRA=11")
     filt = ",".join(filters)
     subprocess.run(
