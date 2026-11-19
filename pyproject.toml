@@ -3,10 +3,11 @@ name = "autopilot"
 version = "0.1.0"
 description = "Tech Shorts Autopilot: automated AI & tech explainer shorts starring Byte the squirrel"
 requires-python = ">=3.11"
-dependencies = ["cairosvg>=2.7", "pillow>=10", "numpy>=1.26"]
+dependencies = ["cairosvg>=2.7", "pillow>=10", "numpy>=1.26", "soundfile>=0.12", "kokoro-onnx>=0.4"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+captions = ["faster-whisper>=1.0"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
